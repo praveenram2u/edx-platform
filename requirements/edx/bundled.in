@@ -25,6 +25,7 @@ pygments                            # Used to support colors in paver command ou
 
 ## Third party integrations
 algoliasearch                       # Algolia’s API client for indexed searching
+auth0-python
 django-ses                          # Django email backend for Amazon’s Simple Email Service
 edx-braze-client                    # a customer engagement platform used for edx.org
 mailsnake                           # MailChimp API; used for two management commands in the "mailing" djangoapp

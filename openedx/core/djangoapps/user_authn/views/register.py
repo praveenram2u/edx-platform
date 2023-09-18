@@ -86,6 +86,7 @@ from common.djangoapps.util.db import outer_atomic
 from common.djangoapps.util.json_request import JsonResponse
 
 from edx_django_utils.user import generate_password  # lint-amnesty, pylint: disable=wrong-import-order
+from auth0.authentication import Database
 
 log = logging.getLogger("edx.student")
 AUDIT_LOG = logging.getLogger("audit")
@@ -108,6 +109,37 @@ REGISTER_USER = Signal()
 
 
 REAL_IP_KEY = 'openedx.core.djangoapps.util.ratelimit.real_ip'
+
+
+# todo:
+# this needs to be generic
+# belongs in another library internal to edx org rather than openedx org
+def create_account_in_auth0(form, user_id):
+    """
+    Create account in Auth0
+    """
+    # todo: env vars
+    auth0_database = Database(
+        getattr(settings, 'AUTH0_DOMAIN'),
+        getattr(settings, 'AUTH0_CLIENT_ID')
+    )
+
+    try:
+        response = auth0_database.signup(
+            email=form.cleaned_data["email"],
+            password=form.cleaned_data["password"],
+            username=form.cleaned_data["username"],
+            name=form.cleaned_data.get("name", form.cleaned_data["username"]),
+            user_metadata={ "lms_user_id": str(user_id) },
+            connection=getattr(settings, 'AUTH0_CONNECTION_NAME')
+        )
+
+        return response['_id']
+    except Exception as err:
+        print(err)
+        raise ValidationError({
+            "password": str(err)
+        })
 
 
 @transaction.non_atomic_requests
@@ -210,6 +242,10 @@ def create_account_with_params(request, params):  # pylint: disable=too-many-sta
     with outer_atomic():
         # first, create the account
         (user, profile, registration) = do_create_account(form, custom_form)
+
+        if getattr(settings, "ENABLE_CUSTOM_AUTH_BACKEND", False):
+            # create the account in Auth0
+            auth0_user_id = create_account_in_auth0(form, user.id)
 
         third_party_provider, running_pipeline = _link_user_to_third_party_provider(
             is_third_party_auth_enabled, third_party_auth_credentials_in_api, user, request, params,
@@ -804,6 +840,7 @@ class RegistrationValidationView(APIView):
         """ Validates whether the username is valid. """
         username = request.data.get('username')
         invalid_username_error = get_username_validation_error(username)
+        # todo: validate against auth0
         username_exists_error = get_username_existence_validation_error(username)
         if username_exists_error:
             self.username_suggestions = generate_username_suggestions(username)
@@ -815,6 +852,7 @@ class RegistrationValidationView(APIView):
         """ Validates whether the email address is valid. """
         email = request.data.get('email')
         invalid_email_error = get_email_validation_error(email)
+        # todo: validate against auth0
         email_exists_error = get_email_existence_validation_error(email)
         # We prefer seeing for invalidity first.
         # Some invalid emails (like a blank one for superusers) may exist.

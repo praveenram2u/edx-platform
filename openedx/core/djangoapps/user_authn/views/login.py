@@ -58,6 +58,8 @@ from openedx.core.djangolib.markup import HTML, Text
 from openedx.core.lib.api.view_utils import require_post_params  # lint-amnesty, pylint: disable=unused-import
 from openedx.features.enterprise_support.api import activate_learner_enterprise, get_enterprise_learner_data_from_api
 
+from auth0.authentication import GetToken
+
 log = logging.getLogger("edx.student")
 AUDIT_LOG = logging.getLogger("audit")
 USER_MODEL = get_user_model()
@@ -221,6 +223,31 @@ def _log_and_raise_inactive_user_auth_error(unauthenticated_user):
     )
 
 
+# todo:
+# this needs to be generic
+# belongs in another library internal to edx org rather than openedx org
+def authenticate_auth0_user(username, password, request_ip):
+    """
+    Authenticate account in Auth0
+    """
+    # todo: env vars
+    auth0_get_token = GetToken(
+        getattr(settings, 'AUTH0_DOMAIN'),
+        getattr(settings, 'AUTH0_CLIENT_ID')
+    )
+
+    try:
+        response = auth0_get_token.login(
+            username=username,
+            password=password,
+            realm=getattr(settings, 'AUTH0_CONNECTION_NAME'),
+            forwarded_for=request_ip
+        )
+
+        return response['id_token']
+    except Exception as err:
+        print(err)
+
 def _authenticate_first_party(request, unauthenticated_user, third_party_auth_requested):
     """
     Use Django authentication on the given request, using rate limiting if configured
@@ -240,6 +267,16 @@ def _authenticate_first_party(request, unauthenticated_user, third_party_auth_re
         _check_user_auth_flow(request.site, unauthenticated_user)
 
     password = normalize_password(request.POST['password'])
+
+    if getattr(settings, "ENABLE_CUSTOM_AUTH_BACKEND", False):
+        id_token = authenticate_auth0_user(request.POST['email'], password, request.META.get('REMOTE_ADDR'))
+
+        return authenticate(
+            username=username,
+            id_token=id_token,
+            request=request
+        )
+
     return authenticate(
         username=username,
         password=password,
